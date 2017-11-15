@@ -1,0 +1,3 @@
+# copy this file into one called 'cmps242_hw5_config.py' and set the values appropriately
+
+GLOVE_LOCATION = "../glove.6B/glove.6B.50d.txt"
