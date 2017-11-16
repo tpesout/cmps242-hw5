@@ -29,7 +29,7 @@ HC = "HillaryClinton"
 DT = "realDonaldTrump"
 NA = "none"
 HANDLES = [HC, DT, NA]
-HANDLE_MAP = {NA: 0, HC: 1, DT: 2}
+HANDLE_MAP = {NA: -1, HC: 0, DT: 1}
 
 
 # read csv file, return handles and tweets
@@ -191,13 +191,19 @@ LENGTH = 'length'
 
 # this is so the glove output is in integer form (maybe not necessary)
 FLOAT_GRANULARITY = (1 << 16)
-VOCAB_SIZE = 2 * FLOAT_GRANULARITY # for positive and negative
+VOCAB_SIZE = 2 * FLOAT_GRANULARITY + 1 # for positive and negative
+
+# this is so we can define a range for the values
+value_max = 0
+for tweet in tweets:
+    for x in tweet:
+        if abs(x) > value_max: value_max = abs(x)
 
 # split into test and train
 train_labels, train_data, test_labels, test_data = list(), list(), list(), list()
 for handle, tweet in zip(handles, tweets):
     if np.isnan(tweet[0]): continue #a row of all nan's happens with data that glove can't understand (like, all hashtags)
-    tweet = list(map(lambda x: int(x * FLOAT_GRANULARITY), tweet))
+    tweet = list(map(lambda x: int(x / value_max * FLOAT_GRANULARITY + FLOAT_GRANULARITY), tweet))
     if random.random() < TEST_RATIO:
         test_labels.append(handle)
         test_data.append(tweet)
@@ -251,10 +257,16 @@ class DataIterator():
             self.epochs += 1
             self.shuffle()
         res = self.df.ix[self.cursor:self.cursor + n - 1]
+        start_idx = self.cursor
         self.cursor += n
         # return res['as_numbers'], res['gender']*3 + res['age_bracket'], res['length']
         # return res[DATA], res[LABEL], res[LENGTH]
-        return res[DATA], res[LABEL], res[LENGTH]
+        data = res[DATA]
+        labels = res[LABEL]
+        length = res[LENGTH]
+        return np.asarray([data[i] for i in range(start_idx, start_idx + len(data))]), \
+               np.asarray([labels[i] for i in range(start_idx, start_idx + len(labels))]), \
+               np.asarray([length[i] for i in range(start_idx, start_idx + len(length))])
 
 
 def reset_graph():
@@ -263,14 +275,14 @@ def reset_graph():
     tf.reset_default_graph()
 
 
-def build_graph(vocab_size=VOCAB_SIZE, state_size=64, batch_size=16, num_classes=2):
+def build_graph(vocab_size=VOCAB_SIZE, state_size=64, batch_size=256, num_classes=2):
     reset_graph()
 
     # Placeholders
     x = tf.placeholder(tf.int32, [batch_size, None])  # [batch_size, num_steps]
     seqlen = tf.placeholder(tf.int32, [batch_size])
     y = tf.placeholder(tf.int32, [batch_size])
-    keep_prob = tf.constant(1.0)
+    keep_prob = tf.placeholder_with_default(1.0, [])
 
     # Embedding layer
     embeddings = tf.get_variable('embedding_matrix', [vocab_size, state_size])
@@ -326,7 +338,6 @@ def train_graph(g, batch_size=256, num_epochs=10, iterator=DataIterator):
             step += 1
             batch = tr.next_batch(batch_size)
             feed = {g['x']: batch[0], g['y']: batch[1], g['seqlen']: batch[2], g['dropout']: 0.6}
-            print(feed)
             accuracy_, _ = sess.run([g['accuracy'], g['ts']], feed_dict=feed)
             accuracy += accuracy_
 
@@ -349,3 +360,13 @@ def train_graph(g, batch_size=256, num_epochs=10, iterator=DataIterator):
                 print("Accuracy after epoch", current_epoch, " - tr:", tr_losses[-1], "- te:", te_losses[-1])
 
     return tr_losses, te_losses
+
+
+
+################################################
+# run it!
+################################################
+
+# this fails, just like us
+g = build_graph()
+tr_losses, te_losses = train_graph(g)
