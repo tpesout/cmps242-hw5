@@ -8,11 +8,40 @@
 # >echo "set GLOVE_LOCATION in cmps242_hw5_config.py to one of those files"
 ################################################
 from cmps242_hw5_config import *
-from glove import Glove
 
-glove_data = Glove.load_stanford(GLOVE_LOCATION)
+print("Manually importing glove vectors")
 
-print(glove_data.most_similar('test', number=10))
+# glove data
+glove_data = dict()
+max_glove_val = 0
+with open(GLOVE_LOCATION, encoding='utf8') as glovein:
+    for line in glovein:
+        line = line.split()
+        word = line[0]
+        vec = [float(line[i]) for i in range(1, len(line))]
+        for g in vec:
+            if abs(g) > max_glove_val: max_glove_val = abs(g)
+        glove_data[word] = vec
+    print("Imported {} words, with max glove val {}".format(len(glove_data), max_glove_val))
+
+glove_dict_length = len(vec)
+
+
+def get_glove_vector(tokens, glove_information=glove_data, token_vec_length=50, glove_vec_length=glove_dict_length):
+    vec = list()
+
+    i = 0
+    for word in tokens:
+        if word not in glove_information:
+            vec.append([0.0 for _ in range(glove_vec_length)])
+        else:
+            vec.append(glove_information[word])
+        i += 1
+        if i + 1 == token_vec_length: break
+    while i < token_vec_length:
+        vec.append([0.0 for _ in range(glove_vec_length)])
+
+    return vec
 
 ################################################
 # file parsing functions
@@ -89,63 +118,6 @@ def tokenize(tweet, lowercase=True, strip_urls=True, strip_punctuation=True):
             lambda x: x.startswith(u'@') or x.startswith(u'#') or x not in _punctuation and not re.match(
                 u"[^\w\d'\s$]+", x), tokens))
     return tokens
-
-
-# glove information
-def get_glove_vector(glove_data, tokens, epochs=50, ignore_missing=True):
-    """
-    tpesout: This code came from the 'glove' repo I'm using (but had a bug, so I needed to slighly modify it)
-    https://github.com/maciejkula/glove-python/blob/master/glove/glove.py
-
-    Transform an iterable of tokens into its vector representation
-    (a paragraph vector).
-
-    Experimental. This will return something close to a tf-idf
-    weighted average of constituent token vectors by fitting
-    rare words (with low word bias values) more closely.
-    """
-
-    if glove_data.word_vectors is None:
-        raise Exception('Model must be fit to transform paragraphs')
-
-    if glove_data.dictionary is None:
-        raise Exception('Dictionary must be provided to '
-                        'transform paragraphs')
-
-    cooccurrence = collections.defaultdict(lambda: 0.0)
-
-    for token in tokens:
-        try:
-            cooccurrence[glove_data.dictionary[token]] += glove_data.max_count / 10.0
-        except KeyError:
-            if not ignore_missing:
-                raise
-
-    random_state = glove.glove.check_random_state(glove_data.random_state)
-
-    word_ids = np.array(list(cooccurrence.keys()), dtype=np.int32)
-    values = np.array(list(cooccurrence.values()), dtype=np.float64)
-    shuffle_indices = np.arange(len(word_ids), dtype=np.int32)
-
-    # Initialize the vector to mean of constituent word vectors
-    paragraph_vector = np.mean(glove_data.word_vectors[word_ids], axis=0)
-    sum_gradients = np.ones_like(paragraph_vector)
-
-    # Shuffle the coocurrence matrix
-    random_state.shuffle(shuffle_indices)
-    transform_paragraph(glove_data.word_vectors,
-                        glove_data.word_biases,
-                        paragraph_vector,
-                        sum_gradients,
-                        word_ids,
-                        values,
-                        shuffle_indices,
-                        glove_data.learning_rate,
-                        glove_data.max_count,
-                        glove_data.alpha,
-                        epochs)
-
-    return paragraph_vector
 
 
 # get all tweets
