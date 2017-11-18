@@ -1,47 +1,77 @@
 ################################################
-# intialize glove
+# intialize word enumeration
 ################################################
-# >pip install glove_python
-# >wget http://www.google.com/search?q=glove+word+embeddings+download+those+dope+pre+trained+vectors
-# >unzip dope_glove_shit.zip
-# >cp cmps242_hw5_config.py.example cmps242_hw5_config.py
-# >echo "set GLOVE_LOCATION in cmps242_hw5_config.py to one of those files"
-################################################
-from cmps242_hw5_config import *
 
-print("Manually importing glove vectors")
+# config
+INCLUDE_BIGRAMS = False
 
-# glove data
-glove_data = dict()
-max_glove_val = 0
-with open(GLOVE_LOCATION, encoding='utf8') as glovein:
-    for line in glovein:
-        line = line.split()
-        word = line[0]
-        vec = [float(line[i]) for i in range(1, len(line))]
-        for g in vec:
-            if abs(g) > max_glove_val: max_glove_val = abs(g)
-        glove_data[word] = vec
-    print("Imported {} words, with max glove val {}".format(len(glove_data), max_glove_val))
-
-glove_dict_length = len(vec)
+# definitions
+PADDING = 0
+UNKNOWN_WORD = 1
+ENUMERATION_BEGIN = 2
 
 
-def get_glove_vector(tokens, glove_information=glove_data, token_vec_length=50, glove_vec_length=glove_dict_length):
-    vec = list()
+# coverts this string to: ['converts', 'this', 'string', 'to', 'converts this', 'this string', 'string to']
+def add_bigrams_to_tweet(tweet):
+    # collect bigrams
+    bigrams = list()
+    prev = None
+    for word in tweet:
+        if prev is not None: bigrams.append(prev + " " + word)
+        prev = word
+    # append bigrams
+    for bigram in bigrams:
+        tweet.append(bigram)
+    # return, but this is the same list we passed in
+    return tweet
 
-    i = 0
-    for word in tokens:
-        if word not in glove_information:
-            vec.append([0.0 for _ in range(glove_vec_length)])
-        else:
-            vec.append(glove_information[word])
+
+def enumerate_words(tweets):
+    # enumerate all words (bigram or otherwise)
+    corpus = set()
+    for tweet in tweets:
+        for word in tweet:
+            corpus.add(word)
+    # save in dictionary
+    w2i = dict()
+    i = ENUMERATION_BEGIN
+    for word in list(corpus):
+        w2i[word] = i
         i += 1
-        if i + 1 == token_vec_length: break
-    while i < token_vec_length:
-        vec.append([0.0 for _ in range(glove_vec_length)])
+    # return dict
+    return w2i
 
+
+def get_word_vector(w2i, tweet, enforce_length=None):
+    # prep
+    vec = list()
+    i = 0
+    # convert words to integers
+    for w in tweet:
+        if w in w2i:
+            vec.append(w2i[w])
+        else:
+            vec.append(UNKNOWN_WORD)
+        i += 1
+        # stop at enforce_length (if set)
+        if enforce_length is not None and i + 1 == enforce_length:
+            break
+    # pad
+    if enforce_length is not None:
+        while i < enforce_length:
+            vec.append(PADDING)
+            i += 1
+            # fin
     return vec
+
+
+    # from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
+    # if bigram:
+    #     vectorizer = CountVectorizer(ngram_range=(1, 2), token_pattern=r'\\b\\w+\\b',
+    #                                  min_df=1, decode_error='ignore', stop_words=stop_words,
+    #                                  lowercase=lowercase)
+    #     vectorizer = CountVectorizer(decode_error='ignore', stop_words=stop_words, lowercase=lowercase)\n",
+
 
 ################################################
 # file parsing functions
@@ -121,8 +151,15 @@ def tokenize(tweet, lowercase=True, strip_urls=True, strip_punctuation=True):
 
 
 # get all tweets
-def import_text(tweets):
-    return [get_glove_vector(glove_data, tokenize(tweet)) for tweet in tweets]
+def import_text(tweets, w2i=None):
+    tokenized_tweets = [tokenize(tweet) for tweet in tweets]
+    if INCLUDE_BIGRAMS:
+        for tweet in tokenized_tweets:
+            add_bigrams_to_tweet(tweet)
+    if w2i is None:
+        w2i = enumerate_words(tokenized_tweets)
+    return [get_word_vector(w2i, tweet, enforce_length=50) for tweet in tokenized_tweets], tokenized_tweets, w2i
+
 
 
 
@@ -138,18 +175,35 @@ assert TEST_RATIO > 0 and TEST_RATIO < 1
 # get data
 text_handles, raw_tweets = parse_tweet_csv("train.csv")
 handles = int_labels(text_handles)
-tweets = import_text(raw_tweets)
+tweets, tokenized_tweets, word_mapping = import_text(raw_tweets)
 data_vector_size = len(tweets[0])
 
 ### validation
 for i in range(1):
-    tweet = raw_tweets[random.randint(0, len(raw_tweets))]
-    print(tokenize(tweet))
-    print(get_glove_vector(glove_data, tokenize(tweet)))
+    rand_i = random.randint(0, len(raw_tweets))
     print()
-# for handle in int_labels(handles[0:7]):
-#     print(handle)
+    print(raw_tweets[i].strip())
+    print(tokenized_tweets[i])
+    print(tweets[i])
+    print(handles[i])
+    print()
 
+
+################################################
+# get raw test data
+################################################
+_, output_raw_tweets = parse_tweet_csv("test.csv")
+output_tweets, output_tokenized_tweets, _ = import_text(output_raw_tweets, word_mapping)
+assert len(output_tweets[0]) == data_vector_size
+
+### validation
+for i in range(1):
+    rand_i = random.randint(0, len(output_tweets))
+    print()
+    print(output_raw_tweets[i].strip())
+    print(output_tokenized_tweets[i])
+    print(output_tweets[i])
+    print()
 
 
 ################################################
@@ -161,21 +215,11 @@ LABEL = 'handle'
 DATA = 'tweet_data'
 LENGTH = 'length'
 
-# this is so the glove output is in integer form (maybe not necessary)
-FLOAT_GRANULARITY = (1 << 16)
-VOCAB_SIZE = 2 * FLOAT_GRANULARITY + 1 # for positive and negative
-
-# this is so we can define a range for the values
-value_max = 0
-for tweet in tweets:
-    for x in tweet:
-        if abs(x) > value_max: value_max = abs(x)
+VOCAB_SIZE = len(word_mapping) + ENUMERATION_BEGIN
 
 # split into test and train
 train_labels, train_data, test_labels, test_data = list(), list(), list(), list()
 for handle, tweet in zip(handles, tweets):
-    if np.isnan(tweet[0]): continue #a row of all nan's happens with data that glove can't understand (like, all hashtags)
-    tweet = list(map(lambda x: int(x / value_max * FLOAT_GRANULARITY + FLOAT_GRANULARITY), tweet))
     if random.random() < TEST_RATIO:
         test_labels.append(handle)
         test_data.append(tweet)
@@ -231,8 +275,10 @@ class DataIterator():
         res = self.df.ix[self.cursor:self.cursor + n - 1]
         start_idx = self.cursor
         self.cursor += n
-        # return res['as_numbers'], res['gender']*3 + res['age_bracket'], res['length']
         # return res[DATA], res[LABEL], res[LENGTH]
+        # the above line fails.  an error is thrown when tf attempts to call np.asarray on this.
+        # what is different about how our data is organized compared to the blog post this came from?
+        # TODO
         data = res[DATA]
         labels = res[LABEL]
         length = res[LENGTH]
@@ -241,17 +287,48 @@ class DataIterator():
                np.asarray([length[i] for i in range(start_idx, start_idx + len(length))])
 
 
+# validate data iterator
+d = DataIterator(test).next_batch(2)
+print('Input sequences:\n',
+      "{}: \n{}\n".format(type(d[0]), d[0]),
+      "{}: \n{}\n".format(type(d[0][0]), d[0][0]),
+      "{}: \n{}\n".format(type(d[0][0][0]), d[0][0][0]),
+      end='\n\n')
+print('Target values\n',
+      "{}: \n{}\n".format(type(d[1]), d[1]),
+      "{}: \n{}\n".format(type(d[1][0]), d[1][0]),
+      end='\n\n')
+print('Sequence lengths\n',
+      "{}: \n{}\n".format(type(d[2]), d[2]),
+      "{}: \n{}\n".format(type(d[2][0]), d[2][0]),
+      end='\n\n')
+
+
+
+
+################################################
+# initializing our tensor
+#
+# based off of blogpost david parks showed us:
+# https://r2rt.com/recurrent-neural-networks-in-tensorflow-iii-variable-length-sequences.html
+################################################
+import tensorflow as tf
+
+# this is a global variable we use to graph results.  it should be reset to 'list()' before running
+PLOTTING_INFO = None
+
 def reset_graph():
     if 'sess' in globals() and sess:
         sess.close()
     tf.reset_default_graph()
 
 
-def build_graph(vocab_size=VOCAB_SIZE, state_size=64, batch_size=256, num_classes=2):
+def build_graph(vocab_size = VOCAB_SIZE, state_size = 64, batch_size = 256, num_classes = 2):
+
     reset_graph()
 
     # Placeholders
-    x = tf.placeholder(tf.int32, [batch_size, None])  # [batch_size, num_steps]
+    x = tf.placeholder(tf.int32, [batch_size, None]) # [batch_size, num_steps]
     seqlen = tf.placeholder(tf.int32, [batch_size])
     y = tf.placeholder(tf.int32, [batch_size])
     keep_prob = tf.placeholder_with_default(1.0, [])
@@ -270,16 +347,18 @@ def build_graph(vocab_size=VOCAB_SIZE, state_size=64, batch_size=256, num_classe
 
     # Add dropout, as the model otherwise quickly overfits
     rnn_outputs = tf.nn.dropout(rnn_outputs, keep_prob)
-    idx = tf.range(batch_size) * tf.shape(rnn_outputs)[1] + (seqlen - 1)
-    last_rnn_output = tf.gather(tf.reshape(rnn_outputs, [-1, state_size]), idx)
+    idx = tf.range(batch_size)*tf.shape(rnn_outputs)[1] + (seqlen - 1)
+    # last_rnn_output = tf.gather(tf.reshape(rnn_outputs, [-1, state_size]), idx)
+    # last_rnn_output = tf.gather_nd(rnn_outputs, tf.pack([tf.range(batch_size), seqlen-1], axis=1))
+    last_rnn_output = tf.gather_nd(rnn_outputs, tf.stack([tf.range(batch_size), seqlen-1], axis=1))
 
     # Softmax layer
     with tf.variable_scope('softmax'):
-        W = tf.get_variable('W', [state_size, num_classes])
-        b = tf.get_variable('b', [num_classes], initializer=tf.constant_initializer(0.0))
+        W = tf.get_variable('W', [state_size, num_classes]) # weights?
+        b = tf.get_variable('b', [num_classes], initializer=tf.constant_initializer(0.0)) # bias?
     logits = tf.matmul(last_rnn_output, W) + b
     preds = tf.nn.softmax(logits)
-    correct = tf.equal(tf.cast(tf.argmax(preds, 1), tf.int32), y)
+    correct = tf.equal(tf.cast(tf.argmax(preds,1),tf.int32), y)
     accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
 
     loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=y))
@@ -297,7 +376,7 @@ def build_graph(vocab_size=VOCAB_SIZE, state_size=64, batch_size=256, num_classe
     }
 
 
-def train_graph(g, batch_size=256, num_epochs=10, iterator=DataIterator):
+def train_graph(g, batch_size = 256, num_epochs = 10, iterator = DataIterator):
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         tr = iterator(train)
@@ -318,7 +397,7 @@ def train_graph(g, batch_size=256, num_epochs=10, iterator=DataIterator):
                 tr_losses.append(accuracy / step)
                 step, accuracy = 0, 0
 
-                # eval test set
+                #eval test set
                 te_epoch = te.epochs
                 while te.epochs == te_epoch:
                     step += 1
@@ -328,7 +407,7 @@ def train_graph(g, batch_size=256, num_epochs=10, iterator=DataIterator):
                     accuracy += accuracy_
 
                 te_losses.append(accuracy / step)
-                step, accuracy = 0, 0
+                step, accuracy = 0,0
                 print("Accuracy after epoch", current_epoch, " - tr:", tr_losses[-1], "- te:", te_losses[-1])
 
     return tr_losses, te_losses
@@ -341,4 +420,7 @@ def train_graph(g, batch_size=256, num_epochs=10, iterator=DataIterator):
 
 # this fails, just like us
 g = build_graph()
-tr_losses, te_losses = train_graph(g)
+tr_losses, te_losses = train_graph(g, num_epochs=16)
+
+
+
